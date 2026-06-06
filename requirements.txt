@@ -1,0 +1,7 @@
+opencv-python
+Pillow
+numpy
+rich>=13.0
+colorama
+# optional — enables --virtual-cam (also needs OBS Virtual Camera driver on Windows)
+# pyvirtualcam
