@@ -20,8 +20,5 @@ pip-wheel-metadata/
 .DS_Store
 Thumbs.db
 main.txt
-.claude
-claude
-.gitignore
-.qodo
-qodo
+.claude/
+.qodo/
