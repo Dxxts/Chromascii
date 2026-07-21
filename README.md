@@ -124,7 +124,7 @@ This output appears as a real webcam in any app (Discord, Zoom, OBS, Meet).
 ### From source
 
 ```bash
-git clone https://github.com/yourname/chromascii.git
+git clone https://github.com/Dxxts/chromascii.git
 cd chromascii
 pip install .
 ```
