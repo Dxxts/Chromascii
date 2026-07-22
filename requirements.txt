@@ -3,5 +3,9 @@ Pillow
 numpy
 rich>=13.0
 colorama
+yt-dlp
 # optional — enables --virtual-cam (also needs OBS Virtual Camera driver on Windows)
 # pyvirtualcam
+# optional — enables audio playback for video (no system ffmpeg binary needed)
+# av
+# sounddevice

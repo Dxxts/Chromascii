@@ -102,6 +102,112 @@ def kbhit():
         return bool(r)
 
 
+def enable_mouse_mode():
+    if sys.platform == 'win32':
+        import ctypes
+        ENABLE_MOUSE_INPUT = 0x0010
+        ENABLE_EXTENDED_FLAGS = 0x0080
+        ENABLE_QUICK_EDIT_MODE = 0x0040
+        h = ctypes.windll.kernel32.GetStdHandle(-10)
+        mode = ctypes.c_ulong()
+        if not ctypes.windll.kernel32.GetConsoleMode(h, ctypes.byref(mode)):
+            return None
+        old = mode.value
+        new = (old | ENABLE_MOUSE_INPUT | ENABLE_EXTENDED_FLAGS) & ~ENABLE_QUICK_EDIT_MODE
+        ctypes.windll.kernel32.SetConsoleMode(h, new)
+        return old
+    sys.stdout.write('\033[?1000h')
+    sys.stdout.flush()
+    return True
+
+
+def disable_mouse_mode(token):
+    if sys.platform == 'win32':
+        if token is None:
+            return
+        import ctypes
+        h = ctypes.windll.kernel32.GetStdHandle(-10)
+        ctypes.windll.kernel32.SetConsoleMode(h, token)
+        return
+    sys.stdout.write('\033[?1000l')
+    sys.stdout.flush()
+
+
+def poll_input_event():
+    if sys.platform != 'win32':
+        return False
+
+    import ctypes
+    from ctypes import wintypes
+
+    class _COORD(ctypes.Structure):
+        _fields_ = [('X', ctypes.c_short), ('Y', ctypes.c_short)]
+
+    class _KEY_EVENT_RECORD(ctypes.Structure):
+        _fields_ = [
+            ('bKeyDown', wintypes.BOOL),
+            ('wRepeatCount', wintypes.WORD),
+            ('wVirtualKeyCode', wintypes.WORD),
+            ('wVirtualScanCode', wintypes.WORD),
+            ('uChar', wintypes.WCHAR),
+            ('dwControlKeyState', wintypes.DWORD),
+        ]
+
+    class _MOUSE_EVENT_RECORD(ctypes.Structure):
+        _fields_ = [
+            ('dwMousePosition', _COORD),
+            ('dwButtonState', wintypes.DWORD),
+            ('dwControlKeyState', wintypes.DWORD),
+            ('dwEventFlags', wintypes.DWORD),
+        ]
+
+    class _WINDOW_BUFFER_SIZE_RECORD(ctypes.Structure):
+        _fields_ = [('dwSize', _COORD)]
+
+    class _MENU_EVENT_RECORD(ctypes.Structure):
+        _fields_ = [('dwCommandId', wintypes.UINT)]
+
+    class _FOCUS_EVENT_RECORD(ctypes.Structure):
+        _fields_ = [('bSetFocus', wintypes.BOOL)]
+
+    class _EVENT_UNION(ctypes.Union):
+        _fields_ = [
+            ('KeyEvent', _KEY_EVENT_RECORD),
+            ('MouseEvent', _MOUSE_EVENT_RECORD),
+            ('WindowBufferSizeEvent', _WINDOW_BUFFER_SIZE_RECORD),
+            ('MenuEvent', _MENU_EVENT_RECORD),
+            ('FocusEvent', _FOCUS_EVENT_RECORD),
+        ]
+
+    class _INPUT_RECORD(ctypes.Structure):
+        _fields_ = [('EventType', wintypes.WORD), ('Event', _EVENT_UNION)]
+
+    KEY_EVENT = 0x0001
+    MOUSE_EVENT = 0x0002
+
+    kernel32 = ctypes.windll.kernel32
+    h = kernel32.GetStdHandle(-10)
+
+    count = wintypes.DWORD()
+    if not kernel32.GetNumberOfConsoleInputEvents(h, ctypes.byref(count)) or count.value == 0:
+        return False
+
+    records = (_INPUT_RECORD * count.value)()
+    read = wintypes.DWORD()
+    if not kernel32.ReadConsoleInputW(h, records, count.value, ctypes.byref(read)):
+        return False
+
+    hit = False
+    for i in range(read.value):
+        rec = records[i]
+        if rec.EventType == KEY_EVENT and rec.Event.KeyEvent.bKeyDown:
+            hit = True
+        elif rec.EventType == MOUSE_EVENT and rec.Event.MouseEvent.dwButtonState != 0 \
+                and rec.Event.MouseEvent.dwEventFlags == 0:
+            hit = True
+    return hit
+
+
 def format_time(s):
     s = max(0, int(s))
     return f'{s // 60:02d}:{s % 60:02d}'
@@ -117,3 +223,37 @@ def format_size(b):
 
 def is_quit_key(k):
     return k in ('q', 'Q', '\x1b', '\x03')
+
+
+_CONFETTI_CHARS = '*+.oO@#%'
+_CONFETTI_COLORS = ['#f87171', '#fbbf24', '#4ade80', '#22d3ee', '#8b5cf6', '#f472b6']
+
+
+def confetti_burst(duration=0.35):
+    import random
+    import time as _time
+
+    tw, th = get_terminal_size()
+    t0 = _time.perf_counter()
+    sys.stdout.write('\033[2J')
+    while _time.perf_counter() - t0 < duration:
+        buf = ['\033[H']
+        for _y in range(th):
+            parts = []
+            for _x in range(tw):
+                if random.random() < 0.06:
+                    r, g, b = _hex_to_rgb(random.choice(_CONFETTI_COLORS))
+                    ch = random.choice(_CONFETTI_CHARS)
+                    parts.append(f'\033[38;2;{r};{g};{b}m{ch}')
+                else:
+                    parts.append(' ')
+            buf.append(''.join(parts))
+            buf.append('\033[0m\n')
+        sys.stdout.write(''.join(buf))
+        sys.stdout.flush()
+        _time.sleep(0.05)
+
+
+def _hex_to_rgb(h):
+    h = h.lstrip('#')
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))

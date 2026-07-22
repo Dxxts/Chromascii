@@ -2,8 +2,8 @@ import sys
 import numpy as np
 from PIL import Image
 
-from ..utils import get_terminal_size, hide_cursor, show_cursor, getch, is_quit_key
-from .engine import render_frame, resize_for_terminal, calc_render_size, CHARSETS
+from ..utils import get_terminal_size, hide_cursor, show_cursor, getch, is_quit_key, confetti_burst
+from .engine import render_frame, resize_for_terminal, calc_render_size, CHARSETS, note_chars
 
 
 def render_image(path, settings):
@@ -12,15 +12,16 @@ def render_image(path, settings):
     iw, ih = img.size
 
     charset = settings.get('charset_str', CHARSETS['default'])
-    color   = settings.get('color', 'truecolor')
-    uw      = settings.get('width')
+    color = settings.get('color', 'truecolor')
+    uw = settings.get('width')
 
     hide_cursor()
-    sys.stdout.write('\033[2J')
+    confetti_burst(0.25)
     try:
         while True:
             tw, th = get_terminal_size()
             rw, rh = calc_render_size(iw, ih, tw, th, uw)
+            note_chars(rw * rh)
             sys.stdout.write(render_frame(resize_for_terminal(arr, rw, rh), charset, color))
             sys.stdout.flush()
             k = getch()

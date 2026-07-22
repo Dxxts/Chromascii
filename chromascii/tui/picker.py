@@ -2,10 +2,10 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.text import Text
-from rich.panel import Panel
 from rich.rule import Rule
 
 from ..utils import getch, format_size
+from . import theme
 
 console = Console()
 
@@ -14,12 +14,12 @@ _IMG = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
 _VID = {'.mp4', '.mov', '.avi', '.webm'}
 
 
-def _color(p):
+def _color(p, t):
     e = p.suffix.lower()
-    if p.is_dir():   return 'bold cyan'
-    if e in _IMG:    return 'green'
-    if e == '.gif':  return 'magenta'
-    if e in _VID:    return 'yellow'
+    if p.is_dir():   return f'bold {t.accent2}'
+    if e in _IMG:    return t.success
+    if e == '.gif':  return t.accent
+    if e in _VID:    return t.warn
     return 'white'
 
 
@@ -84,27 +84,25 @@ def _build(cwd):
 
 def _draw(cwd, items, sel):
     console.clear()
+    t = theme.current()
 
-    console.print(Panel(
-        f'[bold cyan]open file[/]  [dim]{cwd}[/]',
-        border_style='cyan', padding=(0, 2)
-    ))
+    console.print()
+    console.print(f'  [bold {t.accent2}]chromascii[/]  [{t.muted}]›[/]  [white]open file[/]  [dim]{cwd}[/]')
+    console.print(Rule(style=t.muted))
     console.print()
 
     for i, item in enumerate(items):
         is_sel = i == sel
-        cursor = '[bold bright_cyan]▶[/] ' if is_sel else '  '
-        bg = ' on grey15' if is_sel else ''
+        cursor = f'[bold {t.accent2}]› [/]' if is_sel else '  '
 
         if item == '..':
             line = Text.from_markup(
-                f'  {cursor}[bold cyan{bg}]📁  ..[/]'
+                f'  {cursor}[bold {t.accent2}]📁  ..[/]'
             )
             console.print(line)
             continue
 
-        col = _color(item)
-        bright = f'bright_{col}' if is_sel and not col.startswith('bold') else col
+        col = _color(item, t)
         icon = _icon(item)
         name = (item.name + '/') if item.is_dir() else item.name
         meta = '' if item.is_dir() else _meta(item)
@@ -112,13 +110,13 @@ def _draw(cwd, items, sel):
         line = Text()
         line.append('  ')
         line.append_text(Text.from_markup(cursor))
-        line.append(icon + '  ', f'bold {bright}{bg}')
-        line.append(f'{name:<32}', f'bold {bright}{bg}')
-        line.append(f'  {meta}', f'dim{bg}')
+        line.append(icon + '  ', f'bold {col}' if is_sel else col)
+        line.append(f'{name:<32}', 'bold white' if is_sel else col)
+        line.append(f'  {meta}', 'white' if is_sel else 'dim')
         console.print(line)
 
     console.print()
-    console.print(Rule(style='bright_black'))
+    console.print(Rule(style=t.muted))
     console.print('[dim]  ↑↓ navigate   ⏎ select   ⌫ go up   q cancel[/]')
 
 
