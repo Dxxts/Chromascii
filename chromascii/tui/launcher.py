@@ -25,8 +25,8 @@ _SHINY_CHANCE = 1 / 20
 
 _V2_UPDATES = [
     '60fps everywhere — video, gif and webcam',
-    'Sextant rendering: 2×3 subpixels per cell, the sharpest mode yet',
-    'Synchronized audio for video playback',
+    'Six rendering engines: ascii, halfblock, quadblock, sextant, braille, octant',
+    'Synchronized audio for video playback, spacebar pause/resume',
     'Paste a link — YouTube, TikTok, Tenor, Imgur and more',
     'Webcam up to 60fps, 1440p virtual camera',
     'Export rendered output as a video file (--export)',

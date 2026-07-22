@@ -231,41 +231,64 @@ Running `chromascii` with no arguments opens the interactive launcher.
 
 ### Launcher
 
-An animated startup screen types the title letter by letter, then presents the main menu:
+An animated startup screen types the title letter by letter with a gradient tint, then presents the main menu — a permanently visible "new in v2" panel, the three entries, and a footer row for quit/theme/help:
 
 ```
-╭──────────────────────────────────────────────────╮
-│   ░▒▓   c h r o m a s c i i   ▓▒░               │
-│           turn anything into art                 │
-╰──────────────────────────────────────────────────╯
+              c h r o m a s c i i
+             turn anything into art
+─────────────────────────────────────────────────────
 
-    [1]  open file         pick an image, video or gif
-    [2]  paste path        enter a file path or link
-    [3]  use webcam        live ASCII from camera
-     ?   help                key reference
-     q   quit
+  ✦ new in v2
+    · 60fps everywhere — video, gif and webcam
+    · Six rendering engines: ascii, halfblock,
+      quadblock, sextant, braille, octant
+    · Synchronized audio, spacebar pause/resume
+    · Paste a link — YouTube, TikTok, Tenor, Imgur…
+    · Webcam up to 60fps, 1440p virtual camera
+    · Export rendered output as a video file
+
+  1  open file    pick an image, video or gif
+  2  paste path   enter a file path or link (YouTube, TikTok, Tenor, Imgur, …)
+  3  use webcam   live ASCII from camera
+
+  q  quit    t  theme (violet)    ?  help
 ```
 
-Streaks (consecutive daily opens), lifetime character-render counts, and rotating status messages appear in this screen over time.
+Streaks (consecutive daily opens) and rotating status messages appear as a centered flash line above the menu over time.
 
 ### File browser & settings panel
 
-Selecting **open file** opens an inline browser with file metadata (dimensions, duration, size), followed by a settings panel:
+Selecting **open file** opens an inline browser with file metadata (dimensions, duration, size):
 
 ```
-╭ chromascii ──────────────────────────────────────╮
-│  file    demo.mp4                                │
-│  mode    ── video ──                             │
-╰──────────────────────────────────────────────────╯
+  chromascii  ›  open file  ~/Desktop/media
+───────────────────────────────────────────────────────
+
+    📁  ..
+    📁  clips/
+  ▶ 🖼   sunset.jpg     4.2 MB  3840×2160
+    🎞   demo.mp4      18.4 MB  1920×1080  0:32
+    🎞   loop.gif       2.1 MB   640×480   1.2s
+
+───────────────────────────────────────────────────────
+  ↑↓ navigate   ⏎ select   ⌫ go up   q cancel
+```
+
+...followed by a settings panel:
+
+```
+  chromascii  ›  demo.mp4  video
+───────────────────────────────────────────────────────
 
   ▶ width     ████████████░░░░░░░░░░░░░░   80 chars
     fps       ███████░░░░░░░░░░░░░░░░░░░   24 fps
-    charset   [@#$%&*+=-. ]  default
-    color     truecolor      24-bit ANSI
-    detail    octant         octant blocks, 2×4 subpixels, supersampled (sharpest)
+    charset   [@#$%&*+=-. ]   default
+    color     truecolor       24-bit ANSI
+    detail    octant          octant blocks, 2×4 subpixels, supersampled (sharpest)
     dither    off
     loop      on
 
+───────────────────────────────────────────────────────
   ↑↓ navigate   ← → adjust   tab cycle   space toggle   ⏎ play   q back
 ```
 
