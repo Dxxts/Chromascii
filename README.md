@@ -37,6 +37,9 @@ It ships with a full interactive TUI: animated launcher, file browser, settings 
 - [Audio sync](#audio-sync)
 - [Supported formats](#supported-formats)
 - [Webcam](#webcam)
+- [Face censor](#face-censor)
+- [Mic test](#mic-test)
+- [Terminal greeter](#terminal-greeter)
 - [Virtual camera (Discord / Zoom / OBS)](#virtual-camera)
 - [Exporting video](#exporting-video)
 - [Terminal requirements](#terminal-requirements)
@@ -58,6 +61,9 @@ It ships with a full interactive TUI: animated launcher, file browser, settings 
 | **Links** | Paste a YouTube / TikTok / Tenor / Imgur / direct-media URL — downloaded, cached, and played like a local file |
 | **6 rendering engines** | From plain ASCII to sub-cell Unicode block glyphs — pick speed vs. sharpness (see [below](#rendering-engines)) |
 | **Virtual camera** | Feeds the rendered output into Discord / Zoom / OBS as a real webcam, up to 1440p/60fps |
+| **Face censor** | Detects and pixelates only the face — heavily in the terminal, moderately (rest normal) in the virtual cam — with a guided calibration wizard so the censor never slips off during head movement |
+| **Mic test** | Just-for-fun live microphone visualizer — log-scaled frequency spectrum or a colored (green→red) volume meter |
+| **Terminal greeter** | Optional hook that prints a random ASCII critter + usage tip whenever you open a new terminal |
 | **Export** | Record the rendered output to an MP4 file while it plays |
 | **TUI launcher** | Animated startup screen, file browser, settings panel, 16 color themes, streaks, idle easter eggs |
 | **Color** | Truecolor (24-bit), 256-color, or monochrome — auto-detected |
@@ -227,11 +233,13 @@ chromascii clip.mp4 --export out.mp4
 
 ## Interactive TUI
 
-Running `chromascii` with no arguments opens the interactive launcher.
+Running `chromascii` with no arguments opens the interactive launcher. The whole TUI (launcher, picker, settings, webcam, mic test) runs in the terminal's **alternate screen buffer** — the same trick vim/htop/less use — so nothing it draws ever leaks into your scrollback; scroll up mid-session or after quitting and there's nothing there, the terminal is exactly as it was before you ran `chromascii`.
+
+On Windows terminals, the file picker and settings panels are also mouse-aware: moving the cursor over a row selects it (the same white highlight as arrow-key navigation), and clicking acts on it directly — opens a folder or picks a file in the picker, toggles/cycles a setting in the settings panels. Keyboard navigation still works exactly as before; mouse is additive, not required.
 
 ### Launcher
 
-An animated startup screen types the title letter by letter with a gradient tint, then presents the main menu — a permanently visible "new in v2" panel, the three entries, and a footer row for quit/theme/help:
+An animated startup screen types the title letter by letter with a gradient tint, then presents the main menu — a permanently visible "new in v2" panel, five entries, and a footer row for quit/theme/help:
 
 ```
               c h r o m a s c i i
@@ -250,6 +258,8 @@ An animated startup screen types the title letter by letter with a gradient tint
   1  open file    pick an image, video or gif
   2  paste path   enter a file path or link (YouTube, TikTok, Tenor, Imgur, …)
   3  use webcam   live ASCII from camera
+  4  mic test     just for fun — live mic spectrum / volume meter
+  5  greeter      random ASCII tip whenever you open a new terminal
 
   q  quit    t  theme (violet)    ?  help
 ```
@@ -341,6 +351,15 @@ chromascii --webcam [options]
 | `--no-audio` | flag | off | Disable audio playback for video |
 | `--export PATH` | path | — | Also record the rendered output to a video file |
 | `--virtual-cam` | flag | off | Also feed output to a virtual camera (needs `pyvirtualcam` + OBS) |
+| `--face-censor` | flag | off | Pixelate the detected face — heavily in the terminal, moderately in the virtual cam (webcam only) |
+| `--face-style MODE` | string | `mosaic` | `mosaic` \| `ascii` (random noise) \| `blackout` |
+| `--calibrate-face` | flag | — | Run the face-censor calibration wizard, then exit |
+| `--mic-test` | flag | — | Just-for-fun live mic visualizer: spectrum / colored volume meter (`m` to switch mode) |
+| `--install-hook` | flag | — | Install the terminal-greeter hook into every detected shell profile |
+| `--uninstall-hook` | flag | — | Remove the terminal-greeter hook |
+| `--greet` | flag | — | Print one random greeting and exit (called internally by the hook) |
+| `-h`, `--help` | flag | — | Show a detailed help page (usage, every flag, examples, troubleshooting) and exit |
+| `-v`, `--version` | flag | — | Print the installed version and exit |
 
 ### Examples
 
@@ -353,8 +372,14 @@ chromascii clip.gif --loop                        # animated GIF
 chromascii "https://tenor.com/..."                # link, auto-downloaded & cached
 chromascii --webcam --detail sextant              # live webcam, sextant engine
 chromascii --webcam --virtual-cam                 # webcam → Discord
+chromascii --webcam --face-censor                 # webcam, face pixelated (terminal only)
+chromascii --webcam --virtual-cam --face-censor   # censored face, fed to Discord/OBS too
+chromascii --calibrate-face                       # run the face-censor calibration wizard
 chromascii clip.mp4 --detail ascii --chars "█▓▒░ " --dither   # classic dithered ASCII
 chromascii clip.mp4 --export out.mp4 --no-audio   # silent render-to-file
+chromascii --mic-test                             # talk into the mic, watch the spectrum / meter
+chromascii --install-hook                         # greet every new terminal with a random ASCII tip
+chromascii --help                                 # full reference: every flag, examples, troubleshooting
 ```
 
 ---
@@ -424,6 +449,100 @@ chromascii --webcam
 ```
 
 The HUD shows connection state (`◉ Live: <device name>` / `◉ Not Connected  retrying…`), resolution, and — occasionally — a joke camera nickname instead of the real device name. Capture and render run on separate threads so a slow camera never blocks the render loop, paced to the configured target FPS (up to 60, hardware permitting). Maximize your terminal window for a sharper result — more characters, more detail.
+
+---
+
+## Face censor
+
+```bash
+chromascii --webcam --face-censor                       # censor the face, terminal output only
+chromascii --webcam --virtual-cam --face-censor          # censor the face, fed to Discord/OBS too
+chromascii --webcam --face-censor --face-style ascii     # random ASCII-noise censor look
+chromascii --calibrate-face                              # run the calibration wizard on its own
+```
+
+Detects the face (OpenCV Haar cascade, with alt/profile cascades as fallback while still searching) and censors *only* that region — differently depending on where the frame is going, since the two outputs have very different baseline resolutions:
+
+| Target | Behavior |
+|---|---|
+| **Terminal** | The rest of the frame is already reduced to a handful of ASCII/Unicode cells. The face region gets an even heavier treatment *before* that downsampling, so it can't accidentally carry more structure than the background it sits in. |
+| **Virtual camera** | The rest of the frame stays at near-normal video quality (no ASCII mosaic). Only the face region is censored — it reads as an intentional censor, not a corrupted frame. |
+
+Enable it with `--face-censor` on the CLI, or toggle **face censor → on** in the TUI webcam settings (`space` on that row).
+
+### Censor styles
+
+Pick the look with `--face-style` (CLI) or the **face style** row in webcam settings (`tab` to cycle):
+
+| Style | Look |
+|---|---|
+| `mosaic` (default) | Flat-color pixelation/blur — the classic censor-block look |
+| `ascii` | A continuously-randomized grid of ASCII glyphs on a solid dark backdrop — re-rolled every frame, so it never sits still |
+| `blackout` | A plain solid-color block, no texture |
+
+### Tracking & safety behavior
+
+- **Hold-last-box**: if detection misses for a moment (fast motion, glare, looking away), the last known box stays active for ~1.5s instead of uncovering the face — a brief tracking gap never means an exposed frame.
+- **Smoothed box**: the box is exponentially smoothed frame-to-frame so it doesn't jitter or flicker as you move.
+- **Tiered detection**: once locked, only the cheap frontal-face pass runs every frame for speed. While still searching (or after tracking has been lost past the hold period), slower alt/profile cascades and a flipped-image pass also run, to catch angled heads, hats, and side profiles the fast pass alone would miss.
+- **Safe by default before first lock**: until a face has actually been detected this session, **the entire frame** is censored — not a guessed region — since a face isn't guaranteed to be centered or near the top (webcam framing varies a lot), and a wrong guess would leave the real face exposed while censoring the wrong spot.
+
+### Calibration wizard
+
+Detection alone doesn't know how far *your* face travels when you turn or tilt your head — a fixed padding is either too tight (slips off) or wastes coverage. `--calibrate-face` (or pressing `c` on the **face censor** row in webcam settings) runs a short guided wizard with a **live ASCII preview of the camera**, the raw detected face outlined in green, so you see exactly what the detector sees instead of a blind text-only progress bar:
+
+```
+  chromascii  ›  face censor calibration  (green box = what the detector sees)
+  ─────────────────────────────────────────
+  [live ASCII camera preview, detected face outlined in green]
+
+  head straight  Look straight at the camera, head straight and still
+  ● face detected    1.4s    s = skip step   q = cancel
+```
+
+It steps through **center → down → up → left → right → tilt left → tilt right**, tracking the detected box through each movement. From the spread of boxes it saw, it computes how far past the neutral (center) box the face reached in each direction, adds a safety margin, and saves those per-direction paddings to `face_calibration.json` (same app-data folder as session stats). Live sessions then use that calibration instead of the (looser) built-in defaults — press `s` to skip a step you can't perform, `q` to abort without saving.
+
+---
+
+## Mic test
+
+```bash
+chromascii --mic-test
+```
+
+Just for fun — no real purpose beyond watching your voice move the terminal around. Captures the default microphone and renders it live in one of two modes, toggled with `m`:
+
+| Mode | What it shows |
+|---|---|
+| **Frequency spectrum** (default) | A log-scaled bar spectrum from ~40Hz to 8kHz (bass on the left, treble on the right), each bar colored by its own level — green → yellow → orange → red |
+| **Volume meter** | A single wide bar showing current RMS level in dB, colored the same way, with a peak-hold marker and a `⚠ CLIPPING` warning near 0dB |
+
+`q` / `Esc` to stop. Needs `sounddevice` (`pip install chromascii[audio]`).
+
+---
+
+## Terminal greeter
+
+```bash
+chromascii --install-hook      # add the hook to every shell profile it can find
+chromascii --uninstall-hook    # remove it again
+chromascii --greet             # preview a greeting right now, without installing anything
+```
+
+An opt-in hook that makes every new interactive terminal print a short (~2-3s) animated greeting — a typewriter hello, a random ASCII critter (over a dozen: cats, dogs, foxes, owls, and more) or a small generative pattern, and a usage tip picked from a pool of nearly 30 — then get out of the way. Similar in spirit to `cowsay`/`fortune`/`neofetch` startup banners, but it settles in place rather than scrolling, and any key press skips straight to the end.
+
+`--install-hook` looks for PowerShell, `pwsh`, `bash`, and `zsh` on `PATH` and appends a small marked block (between `# >>> chromascii greet >>>` / `# <<< chromascii greet <<<` comments) to whichever profile file each of those actually uses — it never touches anything else in the file, and running it again is a no-op if the hook is already installed. `--uninstall-hook` removes exactly that block and leaves the rest of the file untouched.
+
+**bash/zsh and PowerShell get deliberately different personalities**, not just different profile files:
+
+| | bash / zsh | PowerShell / pwsh |
+|---|---|---|
+| Tone | warm, casual ("hey there!", "howdy!") | clipped, deadpan ("session initialized.", "standing by.") |
+| Palette | bright — orange, purple, cyan, rose, lime | muted — slate, steel, dark blue-gray |
+| Art mix | mostly animals, occasional pattern | mostly matrix-rain / plasma patterns, animals rendered in a single dark tone |
+| Pacing | quick typewriter, shorter hold | slower typewriter, longer hold |
+
+The hook itself (`--greet`) only prints when standard output is a real interactive terminal — piped output, scripts, and CI never see it — and it does nothing at all if `CHROMASCII_NO_GREET` is set, so you can silence it for one session without uninstalling.
 
 ---
 
@@ -513,6 +632,28 @@ Make sure `yt-dlp` is installed and up to date (`pip install -U yt-dlp`) — ext
 - Confirm `pyvirtualcam` is installed: `pip show pyvirtualcam`
 - Restart Discord after enabling the virtual camera
 
+**`Face censor unavailable: ... has no attribute 'CascadeClassifier'`**
+- Some very recent `opencv-python` wheels (the 5.x series) dropped `CascadeClassifier` from the top-level module. `requirements.txt`/`setup.py` now pin `opencv-python<5` — reinstall with `pip install "opencv-python<5"` to fix it
+- Face censor degrades gracefully when this happens (falls back to a safe censored region instead of crashing), but real face detection needs a 4.x build
+
+**Face never gets censored / stays on the "searching for face…" fallback box**
+- Run `--calibrate-face` facing the camera directly in good, even lighting
+- Haar-cascade detection struggles with strong backlight, extreme angles, or glasses glare — reposition your light source
+- Until the first successful detection each session, chromascii censors a generous centered fallback region rather than showing your raw face
+
+**Censor box flickers or slips off during head movement**
+- Re-run `--calibrate-face` — it derives padding from your own head's range of motion, not a fixed guess
+- The box is held for ~1.5s after a tracking miss and smoothed frame-to-frame, so brief motion blur shouldn't uncover anything; if it still does, the calibration margins are likely too tight for how far you move
+
+**`sounddevice required: pip install chromascii[audio]` (mic test)**
+- `pip install chromascii[audio]` (or just `pip install sounddevice`) — mic test only needs `sounddevice`, not the full audio stack
+- If no bars move, check the OS microphone privacy/permission setting and that the right input device is set as default
+
+**Greeting hook doesn't show up in a new terminal**
+- Confirm it installed: `chromascii --install-hook` again — it reports `installed` vs `already-installed` per shell profile it found
+- It only prints on a real interactive terminal and does nothing if `CHROMASCII_NO_GREET` is set — unset it if you set it previously
+- PowerShell profile changes only apply to *new* windows/tabs, not ones already open
+
 **Rendering is slow / low FPS**
 - Try a lighter engine: `halfblock` or `quadblock` instead of `octant`/`braille`
 - Use a smaller terminal window (fewer characters to render)
@@ -528,6 +669,8 @@ chromascii/
 │   ├── main.py               entry point, CLI parsing, TUI orchestration
 │   ├── utils.py               terminal I/O, keyboard/mouse input, color detection
 │   ├── source.py               URL detection, direct fetch, yt-dlp, disk cache
+│   ├── greet.py                 random ASCII greeting printed by the shell hook
+│   ├── shellhook.py             installs/removes the greeting hook in shell profiles
 │   ├── tui/
 │   │   ├── launcher.py         animated welcome screen, menu, pets, screensavers
 │   │   ├── picker.py           file browser with metadata
@@ -541,7 +684,9 @@ chromascii/
 │       ├── image.py            static image renderer
 │       ├── video.py            video/GIF renderer, frame timing, pause/resume
 │       ├── webcam.py           threaded webcam capture and virtual camera
+│       ├── face.py             face detection, calibration wizard, differential censoring
 │       ├── audio.py            PyAV + sounddevice playback, position-accurate seek
+│       ├── mictest.py           live mic spectrum / volume-meter visualizer
 │       └── export.py           mosaic-to-image conversion, MP4 export
 ├── requirements.txt
 └── setup.py

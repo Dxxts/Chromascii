@@ -33,7 +33,7 @@ setup(
     license='MIT',
     packages=find_packages(),
     install_requires=[
-        'opencv-python',
+        'opencv-python<5',
         'Pillow',
         'numpy',
         'rich>=13.0',

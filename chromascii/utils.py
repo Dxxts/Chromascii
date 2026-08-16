@@ -1,6 +1,7 @@
 import os
 import sys
 import shutil
+import contextlib
 
 
 def get_terminal_size():
@@ -38,6 +39,22 @@ def init_terminal():
                 sys.stderr.reconfigure(encoding='utf-8', errors='replace')
             except Exception:
                 pass
+
+
+@contextlib.contextmanager
+def alt_screen():
+    """Switches to the terminal's alternate screen buffer for the duration of
+    the block, then restores the original screen exactly as it was — same
+    trick vim/htop/less use so a redrawing TUI never leaves frame residue in
+    the user's scrollback. Always restores on the way out, exceptions and
+    Ctrl+C included, so the shell is never left stuck in the alt buffer."""
+    sys.stdout.write('\033[?1049h')
+    sys.stdout.flush()
+    try:
+        yield
+    finally:
+        sys.stdout.write('\033[?1049l')
+        sys.stdout.flush()
 
 
 def hide_cursor():
@@ -133,10 +150,10 @@ def disable_mouse_mode(token):
     sys.stdout.flush()
 
 
-def poll_input_event():
-    if sys.platform != 'win32':
-        return False
-
+def _win32_input_structs():
+    """Builds (once per call) the ctypes structures needed to decode raw
+    Windows console input records — shared by poll_input_event() and
+    read_input_events() so the layout is only defined in one place."""
     import ctypes
     from ctypes import wintypes
 
@@ -182,6 +199,14 @@ def poll_input_event():
     class _INPUT_RECORD(ctypes.Structure):
         _fields_ = [('EventType', wintypes.WORD), ('Event', _EVENT_UNION)]
 
+    return ctypes, wintypes, _INPUT_RECORD
+
+
+def poll_input_event():
+    if sys.platform != 'win32':
+        return False
+
+    ctypes, wintypes, _INPUT_RECORD = _win32_input_structs()
     KEY_EVENT = 0x0001
     MOUSE_EVENT = 0x0002
 
@@ -206,6 +231,90 @@ def poll_input_event():
                 and rec.Event.MouseEvent.dwEventFlags == 0:
             hit = True
     return hit
+
+
+_VK_TOKENS = {
+    0x26: 'up', 0x28: 'down', 0x25: 'left', 0x27: 'right',
+    0x24: 'home', 0x23: 'end', 0x21: 'pageup', 0x22: 'pagedown',
+}
+
+
+def _decode_key_event(ke):
+    """Converts a Windows KEY_EVENT_RECORD into the same token vocabulary
+    getch() returns, so callers can share one set of key-handling branches
+    regardless of which function produced the keypress."""
+    vk = ke.wVirtualKeyCode
+    if vk in _VK_TOKENS:
+        return _VK_TOKENS[vk]
+    if vk == 0x08:
+        return 'backspace'
+    if vk == 0x0D:
+        return '\n'
+    if vk == 0x1B:
+        return '\x1b'
+    if vk == 0x09:
+        return '\t'
+    ch = ke.uChar
+    if ch and ch != '\x00':
+        return ch
+    return 'special'
+
+
+def read_input_events(block=True):
+    """Blocks for at least one console input event and returns a normalized
+    list of events:
+      {'type': 'key', 'key': <getch()-compatible token>}
+      {'type': 'mouse', 'x': col0, 'y': row0, 'move': bool, 'click': bool}
+
+    This is the single input source a screen should use once it wants mouse
+    hover/click support — mixing it with getch()/kbhit() in the same screen
+    would race for the same underlying console input queue. On non-Windows,
+    where there's no cross-platform mouse event stream to decode, it falls
+    back to a single blocking getch() wrapped as a key event; mouse events
+    simply never occur there."""
+    if sys.platform != 'win32':
+        return [{'type': 'key', 'key': getch()}]
+
+    ctypes, wintypes, _INPUT_RECORD = _win32_input_structs()
+    KEY_EVENT = 0x0001
+    MOUSE_EVENT = 0x0002
+    MOUSE_MOVED = 0x0001
+
+    kernel32 = ctypes.windll.kernel32
+    h = kernel32.GetStdHandle(-10)
+
+    if block:
+        count = wintypes.DWORD()
+        if kernel32.GetNumberOfConsoleInputEvents(h, ctypes.byref(count)) and count.value == 0:
+            kernel32.WaitForSingleObject(h, 0xFFFFFFFF)
+
+    count = wintypes.DWORD()
+    if not kernel32.GetNumberOfConsoleInputEvents(h, ctypes.byref(count)) or count.value == 0:
+        return []
+
+    records = (_INPUT_RECORD * count.value)()
+    read = wintypes.DWORD()
+    if not kernel32.ReadConsoleInputW(h, records, count.value, ctypes.byref(read)):
+        return []
+
+    events = []
+    for i in range(read.value):
+        rec = records[i]
+        if rec.EventType == KEY_EVENT:
+            ke = rec.Event.KeyEvent
+            if not ke.bKeyDown:
+                continue
+            events.append({'type': 'key', 'key': _decode_key_event(ke)})
+        elif rec.EventType == MOUSE_EVENT:
+            me = rec.Event.MouseEvent
+            events.append({
+                'type': 'mouse',
+                'x': me.dwMousePosition.X,
+                'y': me.dwMousePosition.Y,
+                'move': bool(me.dwEventFlags & MOUSE_MOVED),
+                'click': me.dwEventFlags == 0 and (me.dwButtonState & 0x0001) != 0,
+            })
+    return events
 
 
 def format_time(s):

@@ -133,6 +133,8 @@ def _draw(highlight=None, flash_message=None):
         ('1', 'open file', 'pick an image, video or gif'),
         ('2', 'paste path', 'enter a file path or link (YouTube, TikTok, Tenor, Imgur, …)'),
         ('3', 'use webcam', 'live ASCII from camera'),
+        ('4', 'mic test', 'just for fun — live mic spectrum / volume meter'),
+        ('5', 'greeter', 'random ASCII tip whenever you open a new terminal'),
     ]
 
     for key, label, hint in entries:
@@ -168,6 +170,7 @@ def _draw_help(t):
 
     shortcuts = [
         ('1 / 2 / 3', 'open file / paste path / use webcam'),
+        ('4 / 5', 'mic test / terminal greeter'),
         ('↑ / ↓', 'navigate menus'),
         ('← / →', 'adjust sliders'),
         ('tab', 'cycle charset / color / detail'),
@@ -196,6 +199,55 @@ def _show_help():
             buf = (buf + k)[-len(_SECRET_COMBO):]
             if buf == _SECRET_COMBO:
                 return 'cat'
+
+
+def _draw_greeter(t, statuses, message=None):
+    console.clear()
+    console.print()
+    console.print(f'  [bold {t.accent2}]chromascii[/]  [{t.muted}]›[/]  [white]terminal greeter[/]')
+    console.print(Rule(style=t.muted))
+    console.print()
+    console.print('  [dim]prints a random ASCII critter + tip whenever you open a new terminal[/]')
+    console.print()
+
+    if not statuses:
+        console.print('  [yellow]no shell found on PATH (powershell / pwsh / bash / zsh)[/]')
+    else:
+        for shell, path, installed in statuses:
+            tag = f'[bold {t.success if installed else t.muted}]{"on " if installed else "off"}[/]'
+            console.print(f'    {tag}   [white]{shell:<10}[/]  [dim]{path}[/]')
+
+    console.print()
+    if message:
+        console.print(f'  [{t.accent2}]{message}[/]')
+        console.print()
+
+    console.print(Rule(style=t.muted))
+    console.print('[dim]  i  install    u  uninstall    q  back[/]')
+
+
+def _show_greeter():
+    from .. import shellhook
+
+    t = theme.current()
+    message = None
+    while True:
+        statuses = shellhook.status()
+        _draw_greeter(t, statuses, message)
+        message = None
+
+        k = getch()
+        if k in ('q', 'Q', '\x1b', '\n'):
+            return
+        if k in ('i', 'I'):
+            results = shellhook.install()
+            if not results:
+                message = 'no shell detected — nothing to install'
+            else:
+                message = 'installed — open a new terminal to see it'
+        elif k in ('u', 'U'):
+            results = shellhook.uninstall()
+            message = 'removed' if results else 'no shell detected'
 
 
 def _draw_pet_frame(lines, t):
@@ -516,6 +568,15 @@ def show_launcher(first_time=True, flash_message=None):
             if k == '3':
                 last = '3'; _draw('3', flash_message); time.sleep(0.08)
                 return 'webcam'
+            if k == '4':
+                last = '4'; _draw('4', flash_message); time.sleep(0.08)
+                return 'mictest'
+            if k == '5':
+                last = '5'; _draw('5', flash_message); time.sleep(0.08)
+                _show_greeter()
+                last_input_t = time.perf_counter()
+                pet_shown = False
+                continue
             if k in ('t', 'T'):
                 theme.cycle()
                 continue

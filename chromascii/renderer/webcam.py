@@ -13,6 +13,7 @@ from .engine import (
     _BRAILLE_SSX, _BRAILLE_SSY, _OCTANT_SSX, _OCTANT_SSY,
 )
 from .export import cellgrid_to_image
+from .face import FaceCensor, censor_for_terminal, censored_vcam_frame, ensure_available as face_ensure_available
 
 
 _NICKNAME_CHANCE = 1 / 6
@@ -49,23 +50,31 @@ def _fetch_cam_name(idx, out):
     out[0] = f'Camera {idx}'
 
 
-def _hud_str(status, cam_name, rw, rh, tw, th, vcam_on=False):
+def _hud_str(status, cam_name, rw, rh, tw, th, vcam_on=False, face_state=None):
     from io import StringIO
     from rich.console import Console
     buf = StringIO()
     c = Console(file=buf, width=tw, highlight=False, markup=True)
     vcam_tag = '  [bold magenta]◈ virt[/]' if vcam_on else ''
+    if face_state == 'locked':
+        face_tag = '  [bold green]◐ censor[/]'
+    elif face_state == 'searching':
+        face_tag = '  [bold yellow]◐ censor: searching for face…[/]'
+    elif face_state == 'error':
+        face_tag = '  [bold red]◐ censor: detection error[/]'
+    else:
+        face_tag = ''
     size_hint = '' if rw >= 140 else f'  [dim](maximize terminal for ↑ quality)[/]'
     if status == 'off':
         c.print(
             f"  [bold cyan]chromascii[/]  [bold red]◉ Not Connected[/]"
-            f"{vcam_tag}  [bright_black]retrying…  \\[q] stop[/]",
+            f"{vcam_tag}{face_tag}  [bright_black]retrying…  \\[q] stop[/]",
             end=''
         )
     else:
         c.print(
             f"  [bold cyan]chromascii[/]  [bold green]◉ Live[/]"
-            f"[dim]: {cam_name}[/]{vcam_tag}  "
+            f"[dim]: {cam_name}[/]{vcam_tag}{face_tag}  "
             f"[dim]{rw}×{rh}[/]{size_hint}  [bright_black]\\[q] stop[/]",
             end=''
         )
@@ -109,6 +118,18 @@ def render_webcam(settings):
     target_fps = float(settings.get('fps') or 30)
     fdur = 1.0 / max(target_fps, 1.0)
     cam_idx = 0
+
+    use_face_censor = settings.get('face_censor', False)
+    face_style = settings.get('face_style', 'mosaic')
+    censor = None
+    if use_face_censor:
+        try:
+            face_ensure_available()
+            censor = FaceCensor()
+        except Exception as e:
+            from rich.console import Console
+            Console().print(f'[yellow]Face censor unavailable: {e}[/]')
+            time.sleep(2)
 
     if random.random() < _NICKNAME_CHANCE:
         cam_name = [random.choice(_NICKNAMES)]
@@ -181,6 +202,9 @@ def render_webcam(settings):
     hide_cursor()
     confetti_burst()
 
+    was_live = False
+    face_error = None
+
     try:
         t.start()
 
@@ -195,6 +219,10 @@ def render_webcam(settings):
             status = 'on' if is_live else 'off'
             vcam_live = use_vcam and vcam is not None
 
+            if is_live != was_live:
+                sys.stdout.write('\033[2J')
+            was_live = is_live
+
             if not buf:
                 sys.stdout.write('\033[H')
                 sys.stdout.write(_hud_str('off', cam_name[0], 0, 0, tw, th, vcam_live))
@@ -206,13 +234,31 @@ def render_webcam(settings):
             rgb = bgr[:, :, ::-1]
             rw, rh = calc_render_size(rgb.shape[1], rgb.shape[0], tw, th, uw, char_aspect=char_aspect)
 
-            sys.stdout.write(_render(rgb, settings, rw, rh, mode))
+            face_box = None
+            face_state = None
+            if censor is not None:
+                if face_error is None:
+                    try:
+                        face_box = censor.update(bgr)
+                        face_state = 'locked' if censor.locked else 'searching'
+                    except Exception as e:
+                        face_error = str(e)
+                if face_error is not None:
+                    face_state = 'error'
+                term_rgb = censor_for_terminal(rgb, face_box, style=face_style)
+            else:
+                term_rgb = rgb
+
+            sys.stdout.write(_render(term_rgb, settings, rw, rh, mode))
             sys.stdout.write(f'\033[{th};1H\033[2K')
-            sys.stdout.write(_hud_str(status, cam_name[0], rw, rh, tw, th, vcam_live))
+            sys.stdout.write(_hud_str(status, cam_name[0], rw, rh, tw, th, vcam_live, face_state))
             sys.stdout.flush()
 
             if vcam_live and is_live:
-                vf = cellgrid_to_image(rgb, vcam_cols, vcam_rows, vcam_w, vcam_h)
+                if censor is not None:
+                    vf = censored_vcam_frame(rgb, face_box, vcam_w, vcam_h, style=face_style)
+                else:
+                    vf = cellgrid_to_image(rgb, vcam_cols, vcam_rows, vcam_w, vcam_h)
                 vcam.send(vf)
                 vcam.sleep_until_next_frame()
 

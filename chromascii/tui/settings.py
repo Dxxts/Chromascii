@@ -1,11 +1,12 @@
 import os
+import sys
 from typing import Optional
 
 from rich.console import Console
 from rich.text import Text
 from rich.rule import Rule
 
-from ..utils import getch, detect_color_mode
+from ..utils import detect_color_mode, enable_mouse_mode, disable_mouse_mode, read_input_events
 from ..renderer.engine import CHARSETS, CHARSET_LABELS, COLOR_MODES, CHARSET_NAMES, DETAIL_MODES
 from . import theme
 
@@ -46,6 +47,10 @@ def _fill(val, lo, hi, color='cyan'):
 
 
 class SettingsPanel:
+    # 1-indexed terminal row of the first settings row — must track the
+    # header print() calls in _draw() below, since mouse clicks map by row.
+    _ROWS_START_ROW = 5
+
     def __init__(self, path):
         self.path = path
         self.fname = os.path.basename(path)
@@ -145,7 +150,7 @@ class SettingsPanel:
 
         console.print()
         console.print(Rule(style=MUTED))
-        console.print('[dim]  ↑↓ navigate   ← → adjust   tab cycle   space toggle   ⏎ play   q back[/]')
+        console.print('[dim]  ↑↓ navigate   ← → adjust   tab/click cycle   space/click toggle   ⏎ play   q back[/]')
 
     def _adjust(self, d):
         delta = 1 if d == 'right' else -1
@@ -164,19 +169,55 @@ class SettingsPanel:
         elif row == 'detail':
             self.didx = (self.didx + 1) % len(DETAIL_MODES)
 
+    def _toggle(self):
+        row = _ROWS[self.sel]
+        if row == 'loop':
+            self.loop = not self.loop
+        elif row == 'dither':
+            self.dither = not self.dither
+
+    def _row_for_y(self, y0):
+        idx = (y0 + 1) - self._ROWS_START_ROW
+        return idx if 0 <= idx < len(_ROWS) else None
+
     def run(self) -> Optional[dict]:
-        while True:
-            self._draw()
-            k = getch()
-            if k in ('q', 'Q', '\x1b', '\x03'): return None
-            if k == '\n': return self._export()
-            if k == 'up':    self.sel = (self.sel - 1) % len(_ROWS)
-            elif k == 'down': self.sel = (self.sel + 1) % len(_ROWS)
-            elif k in ('left', 'right'): self._adjust(k)
-            elif k == '\t':  self._cycle()
-            elif k == ' ':
-                if _ROWS[self.sel] == 'loop': self.loop = not self.loop
-                elif _ROWS[self.sel] == 'dither': self.dither = not self.dither
+        mouse_token = enable_mouse_mode() if sys.platform == 'win32' else None
+        dirty = True
+        try:
+            while True:
+                if dirty:
+                    self._draw()
+                    dirty = False
+                events = read_input_events(block=True)
+
+                for ev in events:
+                    if ev['type'] == 'mouse':
+                        # Windows reports a move event on every cell the
+                        # cursor crosses — redraw only on an actual row
+                        # change, or hovering the list turns into a flicker.
+                        idx = self._row_for_y(ev['y'])
+                        if idx is None:
+                            continue
+                        if idx != self.sel:
+                            self.sel = idx
+                            dirty = True
+                        if ev['click']:
+                            self._cycle()
+                            self._toggle()
+                            dirty = True
+                        continue
+
+                    k = ev['key']
+                    if k in ('q', 'Q', '\x1b', '\x03'): return None
+                    if k == '\n': return self._export()
+                    dirty = True
+                    if k == 'up':    self.sel = (self.sel - 1) % len(_ROWS)
+                    elif k == 'down': self.sel = (self.sel + 1) % len(_ROWS)
+                    elif k in ('left', 'right'): self._adjust(k)
+                    elif k == '\t':  self._cycle()
+                    elif k == ' ':   self._toggle()
+        finally:
+            disable_mouse_mode(mouse_token)
 
     def _export(self):
         cname = CHARSET_NAMES[self.cidx]
@@ -208,12 +249,20 @@ def show_settings(path) -> Optional[dict]:
 
 
 class _WebcamSettings:
-    _ROWS = ['fps', 'color', 'virtual_cam']
+    _ROWS = ['fps', 'color', 'virtual_cam', 'face_censor', 'face_style']
+    # 1-indexed terminal row of the first settings row — must track the
+    # header print() calls in _draw() below, since mouse clicks map by row.
+    _ROWS_START_ROW = 5
 
     def __init__(self):
+        from ..renderer.face import load_calibration, FACE_STYLES
         self.fps = 30
         self.colidx = 0 if detect_color_mode() == 'truecolor' else 1
         self.vcam = False
+        self.face_censor = False
+        self.face_styles = FACE_STYLES
+        self.face_style_idx = 0
+        self.calibrated = load_calibration().get('calibrated', False)
         self.sel = 0
 
     def _draw(self):
@@ -230,7 +279,7 @@ class _WebcamSettings:
         console.print(Rule(style=MUTED))
         console.print()
 
-        labels = ['fps', 'color', 'virtual cam']
+        labels = ['fps', 'color', 'virtual cam', 'face censor', 'face style']
         for i, label in enumerate(labels):
             sel = i == self.sel
             cursor = f'[bold {ACCENT2}]›[/]' if sel else ' '
@@ -250,39 +299,104 @@ class _WebcamSettings:
             elif label == 'virtual cam':
                 _md(line, f'[bold {SUCCESS}]on[/]' if self.vcam else '[dim]off[/]')
                 if sel: _md(line, '  [dim]space[/]')
+            elif label == 'face censor':
+                _md(line, f'[bold {SUCCESS}]on[/]' if self.face_censor else '[dim]off[/]')
+                calib_tag = f'[{SUCCESS}]calibrated[/]' if self.calibrated else f'[{WARN}]using default margins[/]'
+                _md(line, f'   [dim]{calib_tag}[/]')
+                if sel: _md(line, '  [dim]space  ·  c to (re)calibrate[/]')
+            elif label == 'face style':
+                style_name = self.face_styles[self.face_style_idx]
+                line.append(style_name, f'bold {ACCENT2}' if sel else 'white')
+                if sel: _md(line, '  [dim]tab[/]')
 
             console.print(line)
 
         console.print()
         console.print(Rule(style=MUTED))
-        console.print('[dim]  ↑↓ navigate   ← → adjust   tab cycle   space toggle   ⏎ start   q back[/]')
+        console.print('[dim]  ↑↓ navigate   ← → adjust   tab/click cycle   space/click toggle   c calibrate face   ⏎ start   q back[/]')
+
+    def _row_for_y(self, y0):
+        idx = (y0 + 1) - self._ROWS_START_ROW
+        return idx if 0 <= idx < len(self._ROWS) else None
+
+    def _cycle(self, row):
+        if row == 'color':
+            self.colidx = (self.colidx + 1) % len(COLOR_MODES)
+        elif row == 'face_style':
+            self.face_style_idx = (self.face_style_idx + 1) % len(self.face_styles)
+
+    def _toggle(self, row):
+        if row == 'virtual_cam':
+            self.vcam = not self.vcam
+        elif row == 'face_censor':
+            self.face_censor = not self.face_censor
+
+    def _activate(self, row):
+        """A mouse click's equivalent of that row's tab-cycle / space-toggle
+        keyboard shortcut, so clicking a setting acts on it directly instead
+        of only moving the cursor there."""
+        self._cycle(row)
+        self._toggle(row)
 
     def run(self) -> Optional[dict]:
         n = len(self._ROWS)
-        while True:
-            self._draw()
-            k = getch()
-            if k in ('q', 'Q', '\x1b', '\x03'): return None
-            if k == '\n':
-                return {
-                    'width': None,
-                    'fps': self.fps,
-                    'charset_str': CHARSETS['default'],
-                    'color': COLOR_MODES[self.colidx],
-                    'virtual_cam': self.vcam,
-                }
-            if k == 'up':    self.sel = (self.sel - 1) % n
-            elif k == 'down': self.sel = (self.sel + 1) % n
-            elif k in ('left', 'right'):
-                if self._ROWS[self.sel] == 'fps':
-                    delta = 1 if k == 'right' else -1
-                    self.fps = max(1, min(60, self.fps + delta))
-            elif k == '\t':
-                if self._ROWS[self.sel] == 'color':
-                    self.colidx = (self.colidx + 1) % len(COLOR_MODES)
-            elif k == ' ':
-                if self._ROWS[self.sel] == 'virtual_cam':
-                    self.vcam = not self.vcam
+        mouse_token = enable_mouse_mode() if sys.platform == 'win32' else None
+        dirty = True
+        try:
+            while True:
+                if dirty:
+                    self._draw()
+                    dirty = False
+                events = read_input_events(block=True)
+
+                for ev in events:
+                    if ev['type'] == 'mouse':
+                        # Windows reports a move event on every cell the
+                        # cursor crosses — redraw only on an actual row
+                        # change, or hovering the list turns into a flicker.
+                        idx = self._row_for_y(ev['y'])
+                        if idx is None:
+                            continue
+                        if idx != self.sel:
+                            self.sel = idx
+                            dirty = True
+                        if ev['click']:
+                            self._activate(self._ROWS[idx])
+                            dirty = True
+                        continue
+
+                    k = ev['key']
+                    if k in ('q', 'Q', '\x1b', '\x03'):
+                        return None
+                    if k == '\n':
+                        return {
+                            'width': None,
+                            'fps': self.fps,
+                            'charset_str': CHARSETS['default'],
+                            'color': COLOR_MODES[self.colidx],
+                            'virtual_cam': self.vcam,
+                            'face_censor': self.face_censor,
+                            'face_style': self.face_styles[self.face_style_idx],
+                        }
+                    dirty = True
+                    if k == 'up':    self.sel = (self.sel - 1) % n
+                    elif k == 'down': self.sel = (self.sel + 1) % n
+                    elif k in ('left', 'right'):
+                        if self._ROWS[self.sel] == 'fps':
+                            delta = 1 if k == 'right' else -1
+                            self.fps = max(1, min(60, self.fps + delta))
+                    elif k == '\t':
+                        self._cycle(self._ROWS[self.sel])
+                    elif k == ' ':
+                        self._toggle(self._ROWS[self.sel])
+                    elif k in ('c', 'C'):
+                        from ..renderer.face import run_calibration
+                        margins = run_calibration()
+                        if margins is not None:
+                            self.calibrated = True
+                            self.face_censor = True
+        finally:
+            disable_mouse_mode(mouse_token)
 
 
 def show_webcam_settings() -> Optional[dict]:

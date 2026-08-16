@@ -1,4 +1,4 @@
-opencv-python
+opencv-python<5  # 5.x wheels have dropped CascadeClassifier, breaking --face-censor
 Pillow
 numpy
 rich>=13.0

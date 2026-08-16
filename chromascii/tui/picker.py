@@ -1,10 +1,11 @@
+import sys
 from pathlib import Path
 
 from rich.console import Console
 from rich.text import Text
 from rich.rule import Rule
 
-from ..utils import getch, format_size
+from ..utils import format_size, enable_mouse_mode, disable_mouse_mode, read_input_events
 from . import theme
 
 console = Console()
@@ -12,6 +13,15 @@ console = Console()
 EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.mp4', '.mov', '.avi', '.webm', '.bmp', '.webp'}
 _IMG = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
 _VID = {'.mp4', '.mov', '.avi', '.webm'}
+
+# 1-indexed terminal row of the first list item — must track the header
+# print() calls in _draw() below, since mouse clicks are mapped by row.
+_ITEMS_START_ROW = 5
+
+
+def _index_for_row(y0, n_items):
+    idx = (y0 + 1) - _ITEMS_START_ROW
+    return idx if 0 <= idx < n_items else None
 
 
 def _color(p, t):
@@ -117,33 +127,70 @@ def _draw(cwd, items, sel):
 
     console.print()
     console.print(Rule(style=t.muted))
-    console.print('[dim]  ↑↓ navigate   ⏎ select   ⌫ go up   q cancel[/]')
+    console.print('[dim]  ↑↓ navigate   ⏎ select   ⌫ go up   click to open   q cancel[/]')
 
 
 def show_picker():
     cwd = Path.cwd()
     items = _build(cwd)
     sel = 0
+    mouse_token = enable_mouse_mode() if sys.platform == 'win32' else None
 
+    try:
+        return _run(cwd, items, sel)
+    finally:
+        disable_mouse_mode(mouse_token)
+
+
+def _run(cwd, items, sel):
+    dirty = True
     while True:
-        _draw(cwd, items, sel)
-        k = getch()
+        if dirty:
+            _draw(cwd, items, sel)
+            dirty = False
+        events = read_input_events(block=True)
 
-        if k in ('q', 'Q', '\x1b', '\x03'):
-            return ''
-        elif k == 'up':
-            sel = (sel - 1) % max(len(items), 1)
-        elif k == 'down':
-            sel = (sel + 1) % max(len(items), 1)
-        elif k == 'backspace':
-            parent = cwd.parent
-            if parent != cwd:
-                cwd = parent
-                items = _build(cwd)
-                sel = 0
-        elif k == '\n':
-            if not items:
+        activate = False
+        for ev in events:
+            if ev['type'] == 'mouse':
+                # Windows reports a move event on every cell the cursor
+                # crosses — redraw only when it actually lands on a
+                # different row, or hovering the list turns into a flicker.
+                idx = _index_for_row(ev['y'], len(items))
+                if idx is None:
+                    continue
+                if idx != sel:
+                    sel = idx
+                    dirty = True
+                if ev['click']:
+                    activate = True
                 continue
+
+            k = ev['key']
+            if k in ('q', 'Q', '\x1b', '\x03'):
+                return ''
+            elif k == 'up':
+                sel = (sel - 1) % max(len(items), 1)
+                dirty = True
+            elif k == 'down':
+                sel = (sel + 1) % max(len(items), 1)
+                dirty = True
+            elif k == 'backspace':
+                parent = cwd.parent
+                if parent != cwd:
+                    cwd = parent
+                    items = _build(cwd)
+                    sel = 0
+                    dirty = True
+            elif k == '\n':
+                activate = True
+            elif k.isdigit():
+                n = int(k) - 1
+                if 0 <= n < len(items):
+                    sel = n
+                    dirty = True
+
+        if activate and items:
             choice = items[sel]
             if choice == '..':
                 parent = cwd.parent
@@ -151,13 +198,11 @@ def show_picker():
                     cwd = parent
                     items = _build(cwd)
                     sel = 0
+                    dirty = True
             elif isinstance(choice, Path) and choice.is_dir():
                 cwd = choice
                 items = _build(cwd)
                 sel = 0
+                dirty = True
             elif isinstance(choice, Path) and choice.is_file():
                 return str(choice)
-        elif k.isdigit():
-            n = int(k) - 1
-            if 0 <= n < len(items):
-                sel = n
